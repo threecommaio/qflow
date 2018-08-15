@@ -1,0 +1,8 @@
+http:
+  timeout: 1s
+
+endpoints:
+  - name: influxdb-cke
+    hosts:
+      - http://10.211.55.6:8080
+      - http://10.211.55.6:8080
