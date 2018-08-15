@@ -1,5 +1,5 @@
 http:
-  timeout: 1s
+  timeout: 10s
 
 endpoints:
   - name: example1
