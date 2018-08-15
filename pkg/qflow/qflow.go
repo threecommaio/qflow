@@ -2,6 +2,7 @@ package qflow
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -49,7 +50,10 @@ func ReplicateChannel(endpoint *Endpoint) {
 			continue
 		}
 
-		client := &http.Client{Timeout: endpoint.Timeout}
+		transport := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // ignore expired SSL certificates
+		}
+		client := &http.Client{Transport: transport, Timeout: endpoint.Timeout}
 		proxyRes, err := client.Do(proxyReq)
 		if err != nil {
 			log.Debugf("error: %s\n", err)
