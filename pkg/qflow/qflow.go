@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
 	"github.com/threecommaio/qflow/pkg/durable"
 )
@@ -29,9 +31,37 @@ type Handler struct {
 	Endpoints []Endpoint
 }
 
+var (
+	rpcDurations = prometheus.NewSummaryVec(
+		prometheus.SummaryOpts{
+			Name:       "rpc_durations_seconds",
+			Help:       "RPC latency distributions.",
+			Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
+		},
+		[]string{"service"},
+	)
+
+	endpointLatencyHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "endpoint_latency_us",
+		Help:    "Endpoint latency distributions in microseconds",
+		Buckets: prometheus.ExponentialBuckets(0.5, 1.3, 50),
+	}, []string{"endpoint"})
+
+	endpointRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "endpoint_requests",
+		Help: "Number of requests",
+	}, []string{"endpoint"})
+
+	endpointFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "endpoint_failures",
+		Help: "Number of failed requests",
+	}, []string{"endpoint"})
+)
+
 func ReplicateChannel(endpoint *Endpoint) {
 	var count int
 	var sizeEndpoints = len(endpoint.Hosts)
+	var microInNS = time.Microsecond.Nanoseconds()
 
 	for {
 		item := <-endpoint.DurableChannel
@@ -46,20 +76,30 @@ func ReplicateChannel(endpoint *Endpoint) {
 		url := fmt.Sprintf("%s%s", endpoint.Hosts[count%sizeEndpoints], req.URL)
 		proxyReq, err := http.NewRequest(req.Method, url, r)
 		if err != nil {
-			log.Debugf("error: %s\n", err)
+			log.Debugf("error: %s", err)
 			continue
 		}
 
-		transport := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // ignore expired SSL certificates
-		}
-		client := &http.Client{Transport: transport, Timeout: endpoint.Timeout}
+		defaultRoundTripper := http.DefaultTransport
+		defaultTransport := defaultRoundTripper.(*http.Transport)
+		defaultTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // ignore expired SSL certificates
+		client := &http.Client{Timeout: endpoint.Timeout, Transport: defaultTransport}
+
+		start := time.Now()
+		endpointRequests.WithLabelValues(endpoint.Name).Inc()
 		proxyRes, err := client.Do(proxyReq)
+
+		respLatencyNS := time.Since(start).Nanoseconds()
+		elasped := float64(respLatencyNS / microInNS)
+		endpointLatencyHistogram.WithLabelValues(endpoint.Name).Observe(elasped)
+
 		if err != nil {
-			log.Debugf("error: %s\n", err)
+			endpointFailures.WithLabelValues(endpoint.Name).Inc()
+			log.Debugf("error: %s", err)
 			endpoint.Writer <- item
 			continue
 		}
+
 		io.Copy(ioutil.Discard, proxyRes.Body)
 		proxyRes.Body.Close()
 	}
@@ -99,6 +139,9 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 		}
 	}
 
+	// register prometheus metrics
+	prometheus.MustRegister(endpointLatencyHistogram, endpointRequests, endpointFailures)
+
 	for _, endpoint := range config.Endpoints {
 		for _, host := range endpoint.Hosts {
 			if !isValidURL(host) {
@@ -134,7 +177,9 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 	}
 
 	handler := &Handler{Endpoints: ep}
+	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/", handler.HandleRequest)
+
 	log.Printf("listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
