@@ -24,6 +24,7 @@ type Endpoint struct {
 	Hosts          []string
 	Writer         chan interface{}
 	DurableChannel chan interface{}
+	WorkerChannel  chan *durable.Request
 	Timeout        time.Duration
 }
 
@@ -32,15 +33,6 @@ type Handler struct {
 }
 
 var (
-	rpcDurations = prometheus.NewSummaryVec(
-		prometheus.SummaryOpts{
-			Name:       "rpc_durations_seconds",
-			Help:       "RPC latency distributions.",
-			Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
-		},
-		[]string{"service"},
-	)
-
 	endpointLatencyHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "endpoint_latency_us",
 		Help:    "Endpoint latency distributions in microseconds",
@@ -68,20 +60,19 @@ var (
 	})
 )
 
-func ReplicateChannel(endpoint *Endpoint) {
+// HTTPWorker handles making the remote HTTP calls with a bounded channel concurrency
+func HTTPWorker(endpoint *Endpoint) {
 	var count int
 	var sizeEndpoints = len(endpoint.Hosts)
 	var microInNS = time.Microsecond.Nanoseconds()
 
+	defaultRoundTripper := http.DefaultTransport
+	defaultTransport := defaultRoundTripper.(*http.Transport)
+	defaultTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // ignore expired SSL certificates
+	client := &http.Client{Timeout: endpoint.Timeout, Transport: defaultTransport}
+
 	for {
-		item := <-endpoint.DurableChannel
-		req := item.(durable.Request)
-		count++
-
-		if count%1000 == 0 {
-			log.Debug("processed 1000 operations")
-		}
-
+		req := <-endpoint.WorkerChannel
 		r := bytes.NewReader(req.Body)
 		url := fmt.Sprintf("%s%s", endpoint.Hosts[count%sizeEndpoints], req.URL)
 		proxyReq, err := http.NewRequest(req.Method, url, r)
@@ -89,11 +80,6 @@ func ReplicateChannel(endpoint *Endpoint) {
 			log.Debugf("error: %s", err)
 			continue
 		}
-
-		defaultRoundTripper := http.DefaultTransport
-		defaultTransport := defaultRoundTripper.(*http.Transport)
-		defaultTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // ignore expired SSL certificates
-		client := &http.Client{Timeout: endpoint.Timeout, Transport: defaultTransport}
 
 		start := time.Now()
 		endpointRequests.WithLabelValues(endpoint.Name).Inc()
@@ -106,12 +92,27 @@ func ReplicateChannel(endpoint *Endpoint) {
 		if err != nil {
 			endpointFailures.WithLabelValues(endpoint.Name).Inc()
 			log.Debugf("error: %s", err)
-			endpoint.Writer <- item
+			endpoint.Writer <- req
 			continue
 		}
 
 		io.Copy(ioutil.Discard, proxyRes.Body)
 		proxyRes.Body.Close()
+	}
+}
+
+// ReadDiskChannel handles reading from the disk backed channel
+func ReadDiskChannel(endpoint *Endpoint) {
+	var count int
+	for {
+		item := <-endpoint.DurableChannel
+		req := item.(durable.Request)
+		count++
+
+		if count%1000 == 0 {
+			log.Debug("processed 1000 operations")
+		}
+		endpoint.WorkerChannel <- &req
 	}
 }
 
@@ -142,6 +143,7 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 	var ep []Endpoint
 	var timeout = config.HTTP.Timeout
 	var maxMsgSize = config.Queue.MaxMessageSize
+	var concurrency = config.HTTP.Concurrency
 
 	if timeout.Seconds() == 0.0 {
 		timeout = 10 * time.Second
@@ -149,6 +151,10 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 
 	if maxMsgSize == 0 {
 		maxMsgSize = 1024 * 1024 * 10 // 10mb
+	}
+
+	if concurrency == 0 {
+		concurrency = 25
 	}
 
 	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
@@ -170,9 +176,14 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 		}
 
 		log.Infof("registered (%s) with endpoints: [%s]", endpoint.Name, strings.Join(endpoint.Hosts, ","))
-		log.Infof("config options: (http timeout: %s, maxMsgSize: %d)", timeout, maxMsgSize)
+		log.Infof("config options: (http timeout: %s, maxMsgSize: %d, concurrency: %d)",
+			timeout,
+			maxMsgSize,
+			concurrency)
 
 		writer := make(chan interface{})
+		worker := make(chan *durable.Request, concurrency)
+
 		c := durable.Channel(writer, &durable.Config{
 			Name:            endpoint.Name,
 			DataPath:        dataDir,
@@ -188,11 +199,16 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 			Hosts:          endpoint.Hosts,
 			Writer:         writer,
 			DurableChannel: c,
+			WorkerChannel:  worker,
 			Timeout:        timeout,
 		}
 		ep = append(ep, *e)
 
-		go ReplicateChannel(e)
+		for i := 0; i < concurrency; i++ {
+			go HTTPWorker(e)
+		}
+
+		go ReadDiskChannel(e)
 
 	}
 

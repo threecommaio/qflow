@@ -1,5 +1,6 @@
 http:
   timeout: 10s
+  concurrency: 25
 
 endpoints:
   - name: example1
