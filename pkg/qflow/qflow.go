@@ -56,6 +56,16 @@ var (
 		Name: "endpoint_failures",
 		Help: "Number of failed requests",
 	}, []string{"endpoint"})
+
+	requests = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "requests",
+		Help: "Number of incoming requests",
+	})
+
+	failures = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "failures",
+		Help: "Number of incoming failed requests",
+	})
 )
 
 func ReplicateChannel(endpoint *Endpoint) {
@@ -107,10 +117,12 @@ func ReplicateChannel(endpoint *Endpoint) {
 
 // HandleRequest handles processing every request sent
 func (h *Handler) HandleRequest(w http.ResponseWriter, req *http.Request) {
+	requests.Inc()
 	body, err := ioutil.ReadAll(req.Body)
 	defer req.Body.Close()
 
 	if err != nil {
+		failures.Inc()
 		log.Debugf("error reading body: %v", err)
 		http.Error(w, "can't read body", http.StatusBadRequest)
 		return
@@ -140,7 +152,7 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 	}
 
 	// register prometheus metrics
-	prometheus.MustRegister(endpointLatencyHistogram, endpointRequests, endpointFailures)
+	prometheus.MustRegister(requests, failures, endpointLatencyHistogram, endpointRequests, endpointFailures)
 
 	for _, endpoint := range config.Endpoints {
 		for _, host := range endpoint.Hosts {
