@@ -20,9 +20,9 @@ var VERSION string
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use: "qflow",
-	Long: `Replicates traffic from to various http endpoints
+	Long: `Replicates traffic to various http endpoints backed by a durable queue
 
-This tool helps replicate to multiple http endpoints backed by a
+This tool helps replicate to various http endpoints backed by a
 durable disk queue in the event of failures or slowdowns.`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
