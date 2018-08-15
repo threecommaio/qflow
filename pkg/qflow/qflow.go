@@ -65,6 +65,7 @@ func ReplicateChannel(endpoint *Endpoint) {
 	}
 }
 
+// HandleRequest handles processing every request sent
 func (h *Handler) HandleRequest(w http.ResponseWriter, req *http.Request) {
 	body, err := ioutil.ReadAll(req.Body)
 	defer req.Body.Close()
@@ -81,6 +82,7 @@ func (h *Handler) HandleRequest(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+// ListenAndServe will startup an http server and handle proxying requests
 func ListenAndServe(config *Config, addr string, dataDir string) {
 	var ep []Endpoint
 	var timeout = config.HTTP.Timeout
@@ -99,7 +101,7 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 
 	for _, endpoint := range config.Endpoints {
 		for _, host := range endpoint.Hosts {
-			if !isValidUrl(host) {
+			if !isValidURL(host) {
 				log.Fatalf("(%s) [%s] is not a valid endpoint url", endpoint.Name, host)
 			}
 		}
@@ -137,8 +139,8 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
-// isValidUrl handles checking if a url is valid
-func isValidUrl(s string) bool {
+// isValidURL handles checking if a url is valid
+func isValidURL(s string) bool {
 	url, err := url.ParseRequestURI(s)
 
 	if url.Scheme != "http" && url.Scheme != "https" {
