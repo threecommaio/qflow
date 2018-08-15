@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/threecommaio/qflow/pkg/durable"
-	// log "github.com/sirupsen/logrus"
 )
 
 type Endpoint struct {
@@ -36,7 +35,7 @@ func ReplicateChannel(endpoint *Endpoint) {
 		count++
 
 		if count%1000 == 0 {
-			fmt.Println("Processed batch of 1000")
+			log.Debug("Processed batch of 1000")
 		}
 
 		r := bytes.NewReader(req.Body)
@@ -97,7 +96,6 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 			MaxMsgSize:      1000,
 			SyncEvery:       10000,
 			SyncTimeout:     time.Second * 10,
-			Logger:          log.New(os.Stdout, "", 0),
 		})
 
 		e := &Endpoint{

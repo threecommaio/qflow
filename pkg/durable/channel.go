@@ -5,9 +5,9 @@ package durable
 import (
 	"bytes"
 	"encoding/gob"
-	"io/ioutil"
-	"log"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type Request struct {
@@ -24,7 +24,6 @@ type Config struct {
 	MaxMsgSize      int32
 	SyncEvery       int64
 	SyncTimeout     time.Duration
-	Logger          *log.Logger
 }
 
 func defaultConfig() *Config {
@@ -36,7 +35,6 @@ func defaultConfig() *Config {
 		MaxMsgSize:      1000,
 		SyncEvery:       10,
 		SyncTimeout:     time.Second * 10,
-		Logger:          log.New(ioutil.Discard, "", 0),
 	}
 }
 
@@ -69,7 +67,7 @@ func (b channel) reader() {
 		var item Request
 		dec := gob.NewDecoder(bytes.NewReader(data))
 		if err := dec.Decode(&item); err != nil {
-			b.config.Logger.Printf("Error unmarshalling object: %s\n", err.Error())
+			log.Errorf("Error unmarshalling object: %s\n", err.Error())
 		}
 		b.out <- item
 	}
@@ -82,9 +80,9 @@ func (b channel) writer() {
 		enc := gob.NewEncoder(&network)
 
 		if err := enc.Encode(item); err != nil {
-			b.config.Logger.Printf("Error marshalling object: %s\n", err.Error())
+			log.Errorf("Error marshalling object: %s\n", err.Error())
 		} else if err := b.dq.Put(network.Bytes()); err != nil {
-			b.config.Logger.Printf("Error putting object: %s\n", err.Error())
+			log.Errorf("Error putting object: %s\n", err.Error())
 		}
 	}
 }
