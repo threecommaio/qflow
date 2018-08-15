@@ -2,7 +2,6 @@ package qflow
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -12,7 +11,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/dutchcoders/durable"
+	"github.com/threecommaio/qflow/pkg/durable"
 	// log "github.com/sirupsen/logrus"
 )
 
@@ -27,36 +26,22 @@ type Handler struct {
 	Endpoints []Endpoint
 }
 
-type Request struct {
-	Method string
-	URL    string
-	Body   []byte
-}
-
 func ReplicateChannel(endpoint *Endpoint) {
 	var count int
 	var sizeEndpoints = len(endpoint.Hosts)
 
 	for {
 		item := <-endpoint.DurableChannel
-		req := item.(map[string]interface{})
-
+		req := item.(durable.Request)
 		count++
 
 		if count%1000 == 0 {
 			fmt.Println("Processed batch of 1000")
 		}
 
-		data, err := base64.StdEncoding.DecodeString(req["Body"].(string))
-		if err != nil {
-			fmt.Println("error:", err)
-			continue
-		}
-
-		r := bytes.NewReader(data)
-
-		url := fmt.Sprintf("%s%s", endpoint.Hosts[count%sizeEndpoints], req["URL"].(string))
-		proxyReq, err := http.NewRequest(req["Method"].(string), url, r)
+		r := bytes.NewReader(req.Body)
+		url := fmt.Sprintf("%s%s", endpoint.Hosts[count%sizeEndpoints], req.URL)
+		proxyReq, err := http.NewRequest(req.Method, url, r)
 		if err != nil {
 			fmt.Printf("error: %s\n", err)
 			continue
@@ -85,7 +70,7 @@ func (h *Handler) HandleRequest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	r := Request{Method: req.Method, URL: req.URL.String(), Body: body}
+	r := &durable.Request{Method: req.Method, URL: req.URL.String(), Body: body}
 	for _, endpoint := range h.Endpoints {
 		endpoint.Writer <- r
 	}
