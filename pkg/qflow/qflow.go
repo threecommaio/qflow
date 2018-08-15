@@ -132,6 +132,9 @@ func (h *Handler) HandleRequest(w http.ResponseWriter, req *http.Request) {
 	for _, endpoint := range h.Endpoints {
 		endpoint.Writer <- r
 	}
+
+	// 200 - StatusNoContent
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ListenAndServe will startup an http server and handle proxying requests
