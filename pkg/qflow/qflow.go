@@ -138,9 +138,14 @@ func (h *Handler) HandleRequest(w http.ResponseWriter, req *http.Request) {
 func ListenAndServe(config *Config, addr string, dataDir string) {
 	var ep []Endpoint
 	var timeout = config.HTTP.Timeout
+	var maxMsgSize = config.Queue.MaxMessageSize
 
 	if timeout.Seconds() == 0.0 {
 		timeout = 10 * time.Second
+	}
+
+	if maxMsgSize == 0 {
+		maxMsgSize = 1024 * 1024 * 10 // 10mb
 	}
 
 	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
@@ -162,15 +167,15 @@ func ListenAndServe(config *Config, addr string, dataDir string) {
 		}
 
 		log.Infof("registered (%s) with endpoints: [%s]", endpoint.Name, strings.Join(endpoint.Hosts, ","))
-		log.Infof("config options: (http timeout: %s)", timeout)
+		log.Infof("config options: (http timeout: %s, maxMsgSize: %d)", timeout, maxMsgSize)
 
 		writer := make(chan interface{})
 		c := durable.Channel(writer, &durable.Config{
 			Name:            endpoint.Name,
 			DataPath:        dataDir,
-			MaxBytesPerFile: 102400,
+			MaxBytesPerFile: 1024 * 1024 * 1024,
 			MinMsgSize:      0,
-			MaxMsgSize:      1000,
+			MaxMsgSize:      maxMsgSize,
 			SyncEvery:       10000,
 			SyncTimeout:     time.Second * 10,
 		})

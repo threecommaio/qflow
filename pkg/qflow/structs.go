@@ -11,6 +11,9 @@ type Config struct {
 	HTTP struct {
 		Timeout time.Duration `yaml:"timeout"`
 	}
+	Queue struct {
+		MaxMessageSize int32 `yaml:"maxMsgSize"`
+	}
 
 	Endpoints []struct {
 		Name  string   `yaml:"name"`
